@@ -63,6 +63,8 @@ class Scanner:
             if not channels:
                 raise ValueError("Каналы не загружены — сначала выберите сервер")
 
+            # категории и голосовые каналы истории не имеют
+            channels = [c for c in channels if int(c.get("type") or 0) not in (2, 4, 13)]
             selected = set(map(str, channel_ids)) if channel_ids else None
             if selected is not None:
                 channels = [c for c in channels if str(c["id"]) in selected]
@@ -186,12 +188,13 @@ class Scanner:
             result = await archive.build_guild_archive(guild_id)
             payload = result.to_dict()
             self.state["archive"] = {
-                "path": payload["path"],
-                "files": len(payload["files"]),
+                "zip_path": payload["zip_path"],
+                "zip_name": payload["zip_name"],
+                "files": payload["files"],
                 "messages": payload["messages"],
             }
             self.state["message"] = (
-                f"Готово: архив из {len(payload['files'])} файлов, "
+                f"Готово: {payload['zip_name']} — {payload['files']} файлов, "
                 f"{payload['messages']} сообщений"
             )
             await self.broadcast({"type": "archive", "data": payload})

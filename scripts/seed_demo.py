@@ -28,12 +28,17 @@ AUTHORS = [
     ("200000000000000006", "lurker", "Молчун", False),
     ("200000000000000007", "arta", "Арта", False),
 ]
+CATEGORIES = [
+    ("300000000000000010", "Текстовые каналы"),
+    ("300000000000000011", "Кухня"),
+]
+# (id, имя, тип, parent_id) — категории дают папки в архиве
 CHANNELS = [
-    ("300000000000000001", "general", 0),
-    ("300000000000000002", "флудилка", 0),
-    ("300000000000000003", "dev-chat", 0),
-    ("300000000000000004", "мемы", 0),
-    ("300000000000000005", "объявления", 5),
+    ("300000000000000001", "general", 0, "300000000000000010"),
+    ("300000000000000002", "флудилка", 0, "300000000000000010"),
+    ("300000000000000003", "dev-chat", 0, "300000000000000010"),
+    ("300000000000000004", "мемы", 0, "300000000000000011"),
+    ("300000000000000005", "объявления", 5, None),
 ]
 PHRASES = [
     "привет всем, кто ещё не спит?",
@@ -66,14 +71,19 @@ async def main() -> None:
     await db.upsert_channels(
         GUILD_ID,
         [
+            {"id": cid, "name": name, "type": 4, "position": index}
+            for index, (cid, name) in enumerate(CATEGORIES)
+        ]
+        + [
             {
                 "id": cid,
                 "name": name,
                 "type": ctype,
                 "position": index,
+                "parent_id": parent,
                 "topic": f"демо-канал #{name}",
             }
-            for index, (cid, name, ctype) in enumerate(CHANNELS)
+            for index, (cid, name, ctype, parent) in enumerate(CHANNELS)
         ],
     )
     channels = await db.list_channels(GUILD_ID)
@@ -97,7 +107,7 @@ async def main() -> None:
     rows = []
     for i in range(1500):
         author = random.choice(AUTHORS[:4] * 3 + AUTHORS[4:])
-        channel_id, channel_name, channel_type = random.choice(CHANNELS)
+        channel_id, channel_name, channel_type, _parent = random.choice(CHANNELS)
         ts = int((now - random.randint(0, 45 * 86400)) * 1000)
         content = random.choice(PHRASES) if random.random() > 0.05 else ""
         attachments = (
@@ -133,7 +143,7 @@ async def main() -> None:
     rows.sort(key=lambda r: r[5])
     await db.insert_messages(rows)
     await db.touch_message_aggregates(rows)
-    for cid, cname, ctype in CHANNELS:
+    for cid, cname, ctype, _parent in CHANNELS:
         count = sum(1 for r in rows if r[2] == cid)
         await db.update_scan_state(
             cid,

@@ -28,16 +28,16 @@ class ForbiddenError(DiscordError):
 
 
 class DiscordClient:
-    """Обёртка над REST API.
+    """Обёртка над Discord REST API.
 
-    Поддерживает оба варианта авторизации: `Bot <token>` и пользовательский
-    токен (без префикса). Схема определяется автоматически при подключении.
+    Работает только с токеном бота: заголовок `Authorization: Bot <token>`.
+    Пользовательские токены отклоняются при подключении.
     """
 
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None
         self.token: str | None = None
-        self.auth_mode: str | None = None  # "bot" | "user"
+        self.auth_mode: str | None = None  # всегда "bot"
         self.me: dict[str, Any] | None = None
         self._lock = asyncio.Lock()
 
@@ -69,9 +69,7 @@ class DiscordClient:
     def _headers(self) -> dict[str, str]:
         if not self.token:
             raise AuthError("Токен не задан")
-        if self.auth_mode == "bot":
-            return {"Authorization": f"Bot {self.token}"}
-        return {"Authorization": self.token}
+        return {"Authorization": f"Bot {self.token}"}
 
     async def _raw_request(
         self,
@@ -83,9 +81,7 @@ class DiscordClient:
     ) -> httpx.Response:
         headers = {}
         if self.token:
-            headers["Authorization"] = (
-                f"Bot {self.token}" if (auth_mode or self.auth_mode) == "bot" else self.token
-            )
+            headers["Authorization"] = f"Bot {self.token}"
         return await self.client.request(method, path, params=params, headers=headers)
 
     async def request(
@@ -184,29 +180,39 @@ class DiscordClient:
     # авторизация
     # ------------------------------------------------------------------ #
     async def connect(self, token: str) -> dict[str, Any]:
-        """Проверяет токен и запоминает схему авторизации."""
-        token = token.strip().removeprefix("Bot ").strip()
+        """Проверяет токен бота и запоминает его. Пользовательские токены не принимаются."""
+        token = token.strip()
+        if token.lower().startswith("bot "):
+            token = token[4:].strip()
         if not token:
             raise AuthError("Пустой токен")
 
-        errors: list[str] = []
-        for mode in ("bot", "user"):
-            self.token, self.auth_mode = token, mode
-            try:
-                me = await self._raw_request("GET", "/users/@me", auth_mode=mode)
-            except httpx.HTTPError as exc:
-                errors.append(str(exc))
-                continue
-            if me.status_code == 200:
-                self.me = me.json()
-                return self.me
-            errors.append(f"{mode}: HTTP {me.status_code}")
+        self.token, self.auth_mode = token, "bot"
+        try:
+            response = await self._raw_request("GET", "/users/@me", auth_mode="bot")
+        except httpx.HTTPError as exc:
+            self.token, self.auth_mode = None, None
+            raise AuthError(f"Сетевая ошибка при проверке токена: {exc}") from exc
 
-        self.token, self.auth_mode, self.me = None, None, None
-        raise AuthError(
-            "Не удалось авторизоваться. Проверьте токен (бот-токен должен быть "
-            "включён с нужными интентами, пользовательский токен — действующим)."
-        )
+        if response.status_code != 200:
+            self.token, self.auth_mode = None, None
+            if response.status_code == 401:
+                raise AuthError(
+                    "Токен бота не принят. Скопируйте актуальный токен во вкладке Bot "
+                    "в Discord Developer Portal (Reset Token)."
+                )
+            raise AuthError(f"Discord ответил HTTP {response.status_code} на проверку токена")
+
+        me = response.json()
+        if not me.get("bot"):
+            self.token, self.auth_mode, self.me = None, None, None
+            raise AuthError(
+                "Это пользовательский токен. Инструмент работает только с токеном бота: "
+                "создайте приложение на discord.com/developers/applications → Bot → Reset Token."
+            )
+
+        self.me = me
+        return me
 
     async def restore(self, token: str) -> dict[str, Any] | None:
         """Тихое восстановление сессии при старте сервера."""

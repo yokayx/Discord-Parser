@@ -1,10 +1,11 @@
-"""Тесты архива: формат записей, файлы по каналам, автосохранение после скана."""
+"""Тесты ZIP-архива: структура «сервер → категории → каналы», формат записей."""
 from __future__ import annotations
 
 import asyncio
 import os
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 TMP = tempfile.mkdtemp(prefix="dp-arch-")
@@ -17,10 +18,10 @@ from app import archive, db  # noqa: E402
 from app.scanner import Scanner  # noqa: E402
 
 GUILD = "910000000000000001"
+CATEGORY_ID = "710000000000000009"
 
 
-def ts(text: str) -> int:
-    # 26.10.2026 19:52 по локальному времени сервера
+def ts() -> int:
     from datetime import datetime
 
     return int(datetime(2026, 10, 26, 19, 52).timestamp() * 1000)
@@ -28,7 +29,7 @@ def ts(text: str) -> int:
 
 def msg_row(mid: str, channel: str, content: str, author: str = "800000000000000001") -> tuple:
     return (
-        mid, GUILD, channel, author, content, ts(content), None, 0, None,
+        mid, GUILD, channel, author, content, ts(), None, 0, None,
         "[]", "[]", "[]", "[]", 0, "[]", content.lower(),
     )
 
@@ -40,8 +41,23 @@ async def prepare() -> None:
     await db.upsert_channels(
         GUILD,
         [
-            {"id": "710000000000000001", "name": "general", "type": 0, "position": 0},
-            {"id": "710000000000000002", "name": "флудилка", "type": 0, "position": 1},
+            {"id": CATEGORY_ID, "name": "Текстовые каналы", "type": 4, "position": 0},
+            {
+                "id": "710000000000000001",
+                "name": "general",
+                "type": 0,
+                "position": 1,
+                "parent_id": CATEGORY_ID,
+            },
+            {
+                "id": "710000000000000002",
+                "name": "флудилка",
+                "type": 0,
+                "position": 2,
+                "parent_id": CATEGORY_ID,
+            },
+            {"id": "710000000000000003", "name": "объявления", "type": 5, "position": 3},
+            {"id": "710000000000000004", "name": "Голосовой", "type": 2, "position": 4},
         ],
     )
     await db.ensure_scan_states(GUILD, await db.list_channels(GUILD))
@@ -56,6 +72,7 @@ async def prepare() -> None:
             msg_row("720000000000000001", "710000000000000001", "привет"),
             msg_row("720000000000000002", "710000000000000001", "как дела?", "800000000000000002"),
             msg_row("720000000000000003", "710000000000000002", "тут кириллица в имени"),
+            msg_row("720000000000000004", "710000000000000003", "объявление"),
         ]
     )
 
@@ -64,7 +81,7 @@ def test_format_message_signature_and_separator() -> None:
     options = archive.ArchiveOptions()
     row = {
         "id": "1",
-        "timestamp": ts(""),
+        "timestamp": ts(),
         "author_name": "Ночная Сова",
         "username": "nightowl",
         "content": "привет",
@@ -81,7 +98,7 @@ def test_format_message_signature_and_separator() -> None:
 def test_attachments_and_empty_content() -> None:
     row = {
         "id": "2",
-        "timestamp": ts(""),
+        "timestamp": ts(),
         "author_name": "Сова",
         "username": "nightowl",
         "content": "",
@@ -93,26 +110,60 @@ def test_attachments_and_empty_content() -> None:
     assert "[вложения: photo.png]" in line
 
 
-def test_build_archive_files_per_channel() -> None:
+def test_zip_structure_server_category_channel() -> None:
     async def run() -> None:
         await prepare()
         result = await archive.build_guild_archive(GUILD, archive.ArchiveOptions())
-        target = Path(result.path)
-        assert target.exists()
-        names = {f["file"] for f in result.files}
-        assert names == {"general.txt", "флудилка.txt", "_authors.txt"}
-        assert result.messages == 3
-        assert (target / "_index.txt").exists()
 
-        authors = (target / "_authors.txt").read_text(encoding="utf-8")
-        assert "Ночная Сова (@nightowl): 2 сообщ." in authors
-        assert "Helper (@bot) [бот]: 1 сообщ." in authors
+        assert result.zip_name.endswith(".zip")
+        assert Path(result.zip_path).exists()
+        assert result.messages == 4
+        # голосовой канал пропускается, категория не считается каналом
+        assert result.skipped_channels == 0
 
-        text = (target / "general.txt").read_text(encoding="utf-8")
-        lines = [ln for ln in text.splitlines() if ln and not ln.startswith("#")]
-        assert len(lines) == 2
-        assert lines[0].startswith("[26.10.2026 19:52] Ночная Сова (@nightowl): привет")
-        assert "[26.10.2026 19:52] Helper (@bot, бот)" in lines[1]
+        with zipfile.ZipFile(result.zip_path) as zf:
+            names = set(zf.namelist())
+            root = result.root_folder
+            assert f"{root}/Текстовые_каналы/general.txt" in names
+            assert f"{root}/Текстовые_каналы/флудилка.txt" in names
+            assert f"{root}/объявления.txt" in names  # канал без категории — корень сервера
+            assert f"{root}/_authors.txt" in names
+            assert f"{root}/_index.txt" in names
+            assert not any("Голосовой" in n for n in names)
+
+            text = zf.read(f"{root}/Текстовые_каналы/general.txt").decode("utf-8")
+            lines = [ln for ln in text.splitlines() if ln and not ln.startswith("#")]
+            assert lines[0].startswith("[26.10.2026 19:52] Ночная Сова (@nightowl): привет")
+            assert "Helper (@bot, бот)" in lines[1]
+
+            index = zf.read(f"{root}/_index.txt").decode("utf-8")
+            assert "[Текстовые_каналы]" in index
+            assert "[Без категории]" in index
+
+    asyncio.run(run())
+
+
+def test_entries_and_preview_from_zip() -> None:
+    async def run() -> None:
+        await prepare()
+        await archive.build_guild_archive(GUILD)
+        info = await archive.archive_info(GUILD)
+        assert info["exists"] is True
+        assert info["bytes"] > 0
+
+        folders = [e for e in info["entries"] if e["kind"] == "folder"]
+        files = [e for e in info["entries"] if e["kind"] == "file"]
+        assert any(e["name"] == "Текстовые_каналы" for e in folders)
+        assert len(files) == 5  # 3 канала + авторы + индекс
+
+        entry = next(e for e in files if e["name"] == "general.txt")
+        data = await archive.read_entry(GUILD, entry["path"])
+        assert "привет" in data["content"]
+        assert data["path"] == entry["path"]
+
+        # поиск по короткому имени тоже работает
+        short = await archive.read_entry(GUILD, "general.txt")
+        assert short["name"] == "general.txt"
 
     asyncio.run(run())
 
@@ -124,35 +175,43 @@ def test_separator_and_time_presets() -> None:
             {"separator": "\\n\\n", "time_format": "iso", "format": "line"}
         )
         result = await archive.build_guild_archive(GUILD, options)
-        text = (Path(result.path) / "general.txt").read_text(encoding="utf-8")
         assert options.sep == "\n\n"
+
+        with zipfile.ZipFile(result.zip_path) as zf:
+            text = zf.read(f"{result.root_folder}/Текстовые_каналы/general.txt").decode("utf-8")
         assert "2026-10-26T19:52" in text
-        # между двумя сообщениями канала ровно пустая строка
-        body = text.split("\n\n")
+        body = [part for part in text.split("\n\n") if part.strip()]
         assert any("привет" in part for part in body)
         assert any("как дела?" in part for part in body)
 
     asyncio.run(run())
 
 
-def test_zip_download() -> None:
+def test_default_separator_is_single_newline() -> None:
     async def run() -> None:
         await prepare()
-        await archive.build_guild_archive(GUILD)
-        path = archive.build_zip(GUILD, "Тестовый Сервер")
-        assert path.exists()
-        assert path.name.isascii()  # имя файла ASCII: кириллица ломает HTTP-заголовки
-        import zipfile
-
-        with zipfile.ZipFile(path) as zf:
-            assert any(n.endswith("general.txt") for n in zf.namelist())
+        result = await archive.build_guild_archive(GUILD, archive.ArchiveOptions())
+        with zipfile.ZipFile(result.zip_path) as zf:
+            text = zf.read(f"{result.root_folder}/Текстовые_каналы/general.txt").decode("utf-8")
+        body = text.split("\n\n", 1)[-1].rstrip("\n").splitlines()
+        assert len(body) == 2  # два сообщения канала, каждое на своей строке
 
     asyncio.run(run())
 
 
-def test_unsafe_names_are_slugified() -> None:
+def test_slug_and_transliteration() -> None:
     assert archive.slugify("канал/с*плохими:символами?") == "канал_с_плохими_символами"
     assert archive.slugify("") == "channel"
+    assert archive.ascii_slug("Демо-сервер") == "Demo-server"
+    assert archive.ascii_slug("") == "guild"
+    assert archive.guild_zip_path(GUILD, "Тестовый Сервер").name.isascii()
+
+
+def test_zip_filename_is_server_specific() -> None:
+    a = archive.guild_zip_path("910000000000000001", "Сервер")
+    b = archive.guild_zip_path("920000000000000002", "Сервер")
+    assert a != b
+    assert "0001" in a.name and "0002" in b.name
 
 
 def test_auto_archive_after_scan() -> None:
@@ -191,10 +250,10 @@ def test_auto_archive_after_scan() -> None:
 
         assert scanner.state["status"] == "done"
         saved = scanner.state.get("archive")
-        assert saved and saved["messages"] == 3
+        assert saved and saved["messages"] == 4
+        assert saved["zip_name"].endswith(".zip")
         assert any(e["type"] == "archive" for e in events)
 
-        # автосохранение можно выключить
         await archive.set_auto(False)
         assert (await archive.auto_enabled()) is False
 

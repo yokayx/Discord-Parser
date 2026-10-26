@@ -205,18 +205,26 @@
     <section class="view" id="view-archive">
       <article class="card">
         <header>
-          <h3>Архив: файлы по каналам</h3>
+          <h3>ZIP-архив: сервер → категории → каналы</h3>
           <span class="muted small" id="archive-last">ещё не создавался</span>
         </header>
-        <p class="muted small" style="margin-bottom:14px">
-          Каждое сообщение — отдельная запись с подписью <b>[дата время] Автор (@username): текст</b>.
-          Записи разделяются <span class="code" id="archive-sep-hint">\n</span>.
-          Файлы сохраняются на диск сервера — папку можно открыть, скопировать или скачать целиком.
+        <p class="muted small" style="margin-bottom:10px">
+          Итоги парсинга складываются в один ZIP на сервер: внутри — папка сервера,
+          в ней папка на каждую категорию и файл на каждый канал.
+          Каждое сообщение подписано <b>[дата время] Автор (@username): текст</b> и отделено
+          <span class="code" id="archive-sep-hint">\n</span>.
         </p>
+        <pre class="archive-tree" id="archive-tree-hint">Сервер.zip
+└── Сервер/
+    ├── Категория/
+    │   └── канал.txt
+    ├── general.txt
+    ├── _authors.txt
+    └── _index.txt</pre>
 
         <div class="archive-form">
           <label class="field">
-            <span>Папка архива</span>
+            <span>ZIP-файл на диске</span>
             <input type="text" id="archive-path" readonly>
           </label>
           <div class="archive-grid">
@@ -260,7 +268,7 @@
 
       <div class="grid-2">
         <article class="card">
-          <header><h3>Файлы каналов</h3><span class="muted small" id="archive-files-meta"></span></header>
+          <header><h3>Содержимое ZIP</h3><span class="muted small" id="archive-files-meta"></span></header>
           <div id="archive-files" class="archive-files">
             <p class="muted small">Архив ещё не создан. Нажмите «Сохранить архив».</p>
           </div>
@@ -313,12 +321,13 @@
     <button class="modal-close" id="connect-close" title="Закрыть">✕</button>
     <h2>Подключение к Discord</h2>
     <p class="muted">
-      Нужен токен <b>бота</b> (рекомендуется, с включённым <i>Message Content Intent</i>) или
-      пользовательский токен. Токен хранится только в памяти сервера, если не включено запоминание.
+      Используется <b>только токен бота</b> — с включённым <i>Message Content Intent</i>.
+      Пользовательские токены не принимаются. Токен хранится в памяти сервера,
+      если не включено запоминание.
     </p>
     <label class="field">
-      <span>Токен</span>
-      <input type="password" id="token-input" placeholder="Вставьте токен" autocomplete="off" spellcheck="false">
+      <span>Токен бота</span>
+      <input type="password" id="token-input" placeholder="Вставьте токен бота" autocomplete="off" spellcheck="false">
     </label>
     <label class="check"><input type="checkbox" id="token-remember"> Запомнить (сохранить в локальной БД)</label>
     <div class="modal-actions">

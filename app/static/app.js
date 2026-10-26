@@ -147,9 +147,7 @@ function renderAccount() {
     ? state.me.global_name || state.me.username
     : "Не подключено";
   $("#account-name").textContent = name;
-  $("#account-mode").textContent = state.me
-    ? state.me.bot ? "бот-аккаунт" : "пользовательский токен"
-    : "нажмите 🛰️";
+  $("#account-mode").textContent = state.me ? "токен бота" : "нажмите 🛰️";
   const av = $("#account-avatar");
   const url = avatarUrl(state.me, 64);
   av.innerHTML = url
@@ -882,7 +880,7 @@ async function loadArchive() {
 }
 
 function renderArchive(info) {
-  $("#archive-path").value = info.path || "";
+  $("#archive-path").value = info.zip_path || "";
   $("#archive-auto").checked = !!info.auto;
   $("#archive-download").href = `/api/archive/download?guild_id=${encodeURIComponent(state.guildId)}`;
   $("#archive-download").classList.toggle("is-disabled", !info.exists);
@@ -896,31 +894,38 @@ function renderArchive(info) {
   $("#archive-sep-hint").textContent = opts.separator || "\\n";
 
   const last = info.last;
-  $("#archive-last").textContent = last
-    ? `последний архив: ${fmtDate(last.generated_at)} · ${fmtNum(last.files.length)} файлов · ${fmtNum(last.messages)} сообщений`
+  $("#archive-last").textContent = info.exists
+    ? `${info.zip_name} · ${fmtBytes(info.bytes)} · ${last ? fmtDate(last.generated_at) : ""}`
     : "ещё не создавался";
 
-  renderArchiveFiles(info.files || []);
+  renderArchiveFiles(info.entries || []);
 }
 
-function renderArchiveFiles(files) {
+function renderArchiveFiles(entries) {
   const box = $("#archive-files");
-  const total = files.reduce((sum, f) => sum + (f.bytes || 0), 0);
+  const files = entries.filter((e) => e.kind === "file");
+  const folders = entries.filter((e) => e.kind === "folder");
   $("#archive-files-meta").textContent = files.length
-    ? `${files.length} файлов · ${fmtBytes(total)}`
+    ? `${folders.length} папок · ${files.length} файлов`
     : "";
-  if (!files.length) {
+  if (!entries.length) {
     box.innerHTML = `<p class="muted small">Архив ещё не создан. Нажмите «Сохранить архив».</p>`;
     return;
   }
-  box.innerHTML = files
-    .map(
-      (f) => `<button class="archive-file" data-file="${esc(f.file)}">
+  box.innerHTML = entries
+    .map((e) => {
+      const depth = e.path.split("/").length - 1;
+      const pad = `padding-left:${8 + depth * 16}px`;
+      if (e.kind === "folder") {
+        return `<div class="archive-folder" style="${pad}">
+          <span>📁</span><span class="name">${esc(e.name)}</span></div>`;
+      }
+      return `<button class="archive-file" data-file="${esc(e.path)}" style="${pad}">
         <span>📄</span>
-        <span class="name">${esc(f.file)}</span>
-        <span class="size">${fmtBytes(f.bytes)}</span>
-      </button>`
-    )
+        <span class="name">${esc(e.name)}</span>
+        <span class="size">${fmtBytes(e.bytes)}</span>
+      </button>`;
+    })
     .join("");
   $$("#archive-files .archive-file").forEach((btn) =>
     btn.addEventListener("click", () => previewArchiveFile(btn.dataset.file))
@@ -933,9 +938,9 @@ async function previewArchiveFile(name) {
       `/api/archive/file?guild_id=${encodeURIComponent(state.guildId)}&name=${encodeURIComponent(name)}`
     );
     $$("#archive-files .archive-file").forEach((b) =>
-      b.classList.toggle("active", b.dataset.file === data.name)
+      b.classList.toggle("active", b.dataset.file === data.path)
     );
-    $("#archive-preview-name").textContent = `${data.name} · ${fmtBytes(data.bytes)}${
+    $("#archive-preview-name").textContent = `${data.path} · ${fmtBytes(data.bytes)}${
       data.truncated ? " · показано начало" : ""
     }`;
     $("#archive-preview").textContent = data.content;
@@ -965,11 +970,12 @@ async function buildArchive() {
       },
     });
     toast(
-      `Архив сохранён: ${fmtNum(result.files.length)} файлов, ${fmtNum(result.messages)} сообщений`,
+      `ZIP сохранён: ${result.zip_name} · ${fmtNum(result.files)} файлов, ${fmtNum(result.messages)} сообщений`,
       "ok"
     );
     await loadArchive();
-    if (result.files.length) previewArchiveFile(result.files[0].file);
+    const first = (result.entries || []).find((e) => e.kind === "file");
+    if (first) previewArchiveFile(first.path);
   } catch (err) {
     $("#archive-error").textContent = err.message;
     toast(`Архив: ${err.message}`, "error");
@@ -1024,7 +1030,7 @@ function connectWs() {
         return;
       }
       toast(
-        `Архив сохранён: ${fmtNum((data.files || []).length)} файлов, ${fmtNum(data.messages)} сообщений`,
+        `ZIP сохранён: ${data.zip_name || "архив"} · ${fmtNum(data.files || 0)} файлов, ${fmtNum(data.messages)} сообщений`,
         "ok"
       );
       if (state.view === "archive") loadArchive();

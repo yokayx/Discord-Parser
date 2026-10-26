@@ -85,7 +85,6 @@ class ArchivePayload(BaseModel):
     include_attachments: bool = True
     include_ids: bool = False
     header: bool = True
-    clean: bool = False
 
 
 class ArchiveAutoPayload(BaseModel):
@@ -229,7 +228,9 @@ async def guild_channels(guild_id: str) -> dict[str, Any]:
 async def guild_clear(guild_id: str) -> dict[str, bool]:
     if scanner.running:
         raise HTTPException(409, "Сначала остановите сканирование")
+    guild = await db.get_guild_row(guild_id)
     await db.remove_guild_data(guild_id)
+    archive.delete_archive(guild_id, (guild or {}).get("name"))
     return {"cleared": True}
 
 
@@ -479,18 +480,18 @@ def _disposition(name: str, ext: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# архив
+# архив (zip: сервер -> папка категории -> файл канала)
 # --------------------------------------------------------------------------- #
 @app.get("/api/archive")
 async def archive_status(guild_id: str) -> dict[str, Any]:
-    """Что уже лежит на диске + текущие настройки формата."""
+    """Состояние zip-архива сервера: файлы, папки категорий, настройки."""
     return await archive.archive_info(guild_id)
 
 
 @app.post("/api/archive")
 async def archive_build(payload: ArchivePayload) -> dict[str, Any]:
-    """Собрать/обновить файлы архива по каналам и сохранить настройки."""
-    options = archive.ArchiveOptions.from_dict(payload.model_dump(), clean=payload.clean)
+    """Собрать zip-архив сервера и сохранить настройки формата."""
+    options = archive.ArchiveOptions.from_dict(payload.model_dump())
     await archive.save_options(options)
     result = await archive.build_guild_archive(payload.guild_id, options)
     data = result.to_dict()
@@ -506,51 +507,40 @@ async def archive_auto(payload: ArchiveAutoPayload) -> dict[str, bool]:
 
 @app.get("/api/archive/download")
 async def archive_download(guild_id: str) -> FileResponse:
+    """Отдаёт готовый zip-архив сервера (без пересборки)."""
     guild = await db.get_guild_row(guild_id)
-    try:
-        path = await asyncio.to_thread(
-            archive.build_zip, guild_id, (guild or {}).get("name")
-        )
-    except FileNotFoundError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    # заголовок должен быть ASCII, поэтому имя дублируется в RFC 5987
-    pretty = f"archive-{guild_id}.zip"
-    header = (
-        f'attachment; filename="{path.name}"; '
-        f"filename*=UTF-8''{quote(pretty)}"
-    )
-    return FileResponse(
-        path,
-        media_type="application/zip",
-        headers={"Content-Disposition": header},
-    )
+    path = archive.guild_zip_path(guild_id, (guild or {}).get("name"))
+    if not path.exists():
+        raise HTTPException(404, "Архив ещё не создан — запустите парсинг или «Сохранить архив»")
+    header = f'attachment; filename="{path.name}"'
+    return FileResponse(path, media_type="application/zip", headers={"Content-Disposition": header})
 
 
-@app.get("/api/archive/files")
-async def archive_files(guild_id: str) -> dict[str, Any]:
-    guild = await db.get_guild_row(guild_id)
-    files = archive.archive_files(guild_id, (guild or {}).get("name"))
+@app.get("/api/archive/entries")
+async def archive_entries(guild_id: str) -> dict[str, Any]:
+    """Содержимое архива: папки категорий и файлы каналов."""
+    info = await archive.archive_info(guild_id)
     return {
-        "files": [{"name": p.name, "bytes": p.stat().st_size} for p in files],
+        "zip_path": info["zip_path"],
+        "zip_name": info["zip_name"],
+        "exists": info["exists"],
+        "bytes": info["bytes"],
+        "entries": info["entries"],
     }
 
 
 @app.get("/api/archive/file")
-async def archive_file(guild_id: str, name: str, limit: int = Query(200_000, ge=1)) -> dict[str, Any]:
-    """Предпросмотр файла архива (обрезается по limit символов)."""
+async def archive_file(
+    guild_id: str, name: str, limit: int = Query(200_000, ge=1)
+) -> dict[str, Any]:
+    """Предпросмотр файла из zip (путь внутри архива)."""
     guild = await db.get_guild_row(guild_id)
     try:
-        path = archive.read_archive_file(guild_id, name, (guild or {}).get("name"))
+        return await archive.read_entry(
+            guild_id, name, (guild or {}).get("name"), limit=limit
+        )
     except FileNotFoundError as exc:
-        raise HTTPException(404, "Файл не найден") from exc
-    text = path.read_text(encoding="utf-8", errors="replace")
-    truncated = len(text) > limit
-    return {
-        "name": path.name,
-        "bytes": path.stat().st_size,
-        "truncated": truncated,
-        "content": text[:limit],
-    }
+        raise HTTPException(404, "Файл не найден в архиве") from exc
 
 
 # --------------------------------------------------------------------------- #
