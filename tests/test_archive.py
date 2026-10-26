@@ -141,6 +141,7 @@ def test_zip_download() -> None:
         await archive.build_guild_archive(GUILD)
         path = archive.build_zip(GUILD, "Тестовый Сервер")
         assert path.exists()
+        assert path.name.isascii()  # имя файла ASCII: кириллица ломает HTTP-заголовки
         import zipfile
 
         with zipfile.ZipFile(path) as zf:

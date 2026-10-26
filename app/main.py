@@ -9,6 +9,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator
+from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -512,11 +513,16 @@ async def archive_download(guild_id: str) -> FileResponse:
         )
     except FileNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
+    # заголовок должен быть ASCII, поэтому имя дублируется в RFC 5987
+    pretty = f"archive-{guild_id}.zip"
+    header = (
+        f'attachment; filename="{path.name}"; '
+        f"filename*=UTF-8''{quote(pretty)}"
+    )
     return FileResponse(
         path,
         media_type="application/zip",
-        filename=path.name,
-        headers={"Content-Disposition": f'attachment; filename="{path.name}"'},
+        headers={"Content-Disposition": header},
     )
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 import shutil
 import time
 import zipfile
@@ -41,7 +42,7 @@ TIME_PRESETS = {
 SEPARATOR_PRESETS = {"\\n": "\n", "\\n\\n": "\n\n", "---": "\n---\n"}
 FORMATS = ("line", "block")
 
-_UNSAFE = re.compile(r'[<>:"/\\\\|?*\\x00-\\x1f]')
+_UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
 def slugify(value: str, fallback: str = "channel", limit: int = 60) -> str:
@@ -52,6 +53,38 @@ def slugify(value: str, fallback: str = "channel", limit: int = 60) -> str:
     if not cleaned:
         cleaned = fallback
     return cleaned[:limit].strip("_") or fallback
+
+
+_TRANSLIT = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
+    "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m",
+    "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "h", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "sch", "ъ": "",
+    "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+}
+
+
+def transliterate(value: str) -> str:
+    """Русские буквы -> латиница (для имён файлов, zip и HTTP-заголовков)."""
+    out = []
+    for char in str(value or ""):
+        lower = char.lower()
+        mapped = _TRANSLIT.get(lower)
+        if mapped is None:
+            out.append(char)
+        elif char.isupper():
+            out.append(mapped.capitalize())
+        else:
+            out.append(mapped)
+    return "".join(out)
+
+
+def ascii_slug(value: str, fallback: str = "guild", limit: int = 40) -> str:
+    """ASCII-имя файла (заголовки HTTP и zip не любят кириллицу)."""
+    normalized = unicodedata.normalize("NFKD", transliterate(value))
+    normalized = normalized.encode("ascii", "ignore").decode("ascii")
+    cleaned = slugify(normalized, fallback=fallback, limit=limit).strip("-_")
+    return cleaned if cleaned and cleaned.isascii() else fallback
 
 
 @dataclass
@@ -412,7 +445,7 @@ def build_zip(guild_id: str, guild_name: str | None = None) -> Path:
         raise FileNotFoundError("Архив ещё не создан")
     ZIP_DIR.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    zip_path = ZIP_DIR / f"archive-{slugify(guild_name or guild_id, 'guild')}-{stamp}.zip"
+    zip_path = ZIP_DIR / f"archive-{ascii_slug(guild_name or guild_id)}-{stamp}.zip"
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for path in sorted(source.rglob("*.txt")):
             zf.write(path, arcname=f"{source.name}/{path.name}")
