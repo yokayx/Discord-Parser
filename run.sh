@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Запуск панели Discord Parser
+# Запуск (Linux/macOS): ./run.sh
 set -e
 cd "$(dirname "$0")"
 

@@ -39,10 +39,13 @@ python3 -m venv .venv
 Запуск:
 
 ```bash
-./run.sh                 # http://localhost:8000 (создаст .venv при необходимости)
+./run.sh                 # Linux/macOS: http://localhost:8000 (venv создастся сам)
 # или
 .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
+
+Windows — двойной клик по `run.bat` (или `run.bat` в PowerShell), откроется
+`http://127.0.0.1:8000`. Нужен Python 3.11+ с галочкой «Add Python to PATH».
 
 Переменные окружения:
 
