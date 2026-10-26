@@ -5,3 +5,6 @@ data/*.db
 data/*.db-*
 .env
 .pytest_cache/
+
+data/archive/
+data/exports/

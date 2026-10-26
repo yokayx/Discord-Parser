@@ -6,7 +6,7 @@ import time
 import traceback
 from typing import Any, Awaitable, Callable, Iterable
 
-from . import db
+from . import archive, db
 from .discord_api import DiscordClient, ForbiddenError
 from .config import PAGE_SIZE
 
@@ -160,6 +160,7 @@ class Scanner:
             self.state["message"] = (
                 "Остановлено пользователем" if self._stop else "Сканирование завершено"
             )
+            await self._save_archive(guild_id)
         except asyncio.CancelledError:
             self.state["status"] = "stopped"
             self.state["message"] = "Задача отменена"
@@ -174,6 +175,28 @@ class Scanner:
             self.state["current_channel"] = None
             await self._emit()
             await self.broadcast({"type": "stats_stale", "data": {"guild_id": guild_id}})
+
+    async def _save_archive(self, guild_id: str) -> None:
+        """Сохраняет итоги парсинга в текстовые файлы по каналам (папка Archive)."""
+        try:
+            if not await archive.auto_enabled():
+                return
+            self.state["message"] = "Сохраняю архив: файлы по каналам…"
+            await self._emit()
+            result = await archive.build_guild_archive(guild_id)
+            payload = result.to_dict()
+            self.state["archive"] = {
+                "path": payload["path"],
+                "files": len(payload["files"]),
+                "messages": payload["messages"],
+            }
+            self.state["message"] = (
+                f"Готово: архив из {len(payload['files'])} файлов, "
+                f"{payload['messages']} сообщений"
+            )
+            await self.broadcast({"type": "archive", "data": payload})
+        except Exception as exc:  # noqa: BLE001 — архив не должен ломать скан
+            self.state["errors"].append({"channel": "архив", "error": str(exc)})
 
     async def _expand_threads(
         self, guild_id: str, channels: list[dict[str, Any]]

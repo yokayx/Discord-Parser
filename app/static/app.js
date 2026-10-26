@@ -17,6 +17,8 @@ const state = {
   selected: new Set(),
   messages: { offset: 0, limit: 50, total: 0 },
   authors: { offset: 0, limit: 50, total: 0 },
+  archive: null,
+  archiveFile: null,
 };
 
 /* ------------------------------------------------------------------ утилиты */
@@ -458,6 +460,7 @@ function handleScan(scan) {
     loadOverview();
     if (state.view === "messages") loadMessages(true);
     if (state.view === "authors") loadAuthors(true);
+    if (state.view === "archive") loadArchive();
     setStatus("Готов");
   }
 
@@ -846,6 +849,150 @@ async function clearData() {
   }
 }
 
+/* ------------------------------------------------------------------ архив */
+const TIME_LABEL = {
+  "%d.%m.%Y %H:%M": "dmy_hm",
+  "%Y-%m-%d %H:%M": "ymd_hm",
+  "%d.%m.%Y %H:%M:%S": "dmy_hms",
+  "%Y-%m-%dT%H:%M:%S": "iso",
+};
+const TIME_VALUE = {
+  dmy_hm: "%d.%m.%Y %H:%M",
+  ymd_hm: "%Y-%m-%d %H:%M",
+  dmy_hms: "%d.%m.%Y %H:%M:%S",
+  iso: "%Y-%m-%dT%H:%M:%S",
+};
+
+function fmtBytes(bytes) {
+  const n = Number(bytes || 0);
+  if (n < 1024) return `${n} Б`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} КБ`;
+  return `${(n / 1024 / 1024).toFixed(2)} МБ`;
+}
+
+async function loadArchive() {
+  if (!state.guildId) return;
+  try {
+    const info = await api(`/api/archive?guild_id=${encodeURIComponent(state.guildId)}`);
+    state.archive = info;
+    renderArchive(info);
+  } catch (err) {
+    toast(`Архив: ${err.message}`, "error");
+  }
+}
+
+function renderArchive(info) {
+  $("#archive-path").value = info.path || "";
+  $("#archive-auto").checked = !!info.auto;
+  $("#archive-download").href = `/api/archive/download?guild_id=${encodeURIComponent(state.guildId)}`;
+  $("#archive-download").classList.toggle("is-disabled", !info.exists);
+
+  const opts = info.options || {};
+  $("#archive-format").value = opts.format || "line";
+  $("#archive-separator").value = opts.separator || "\\n";
+  $("#archive-time").value = TIME_LABEL[opts.time_format] || "dmy_hm";
+  $("#archive-attachments").checked = opts.include_attachments !== false;
+  $("#archive-ids").checked = !!opts.include_ids;
+  $("#archive-sep-hint").textContent = opts.separator || "\\n";
+
+  const last = info.last;
+  $("#archive-last").textContent = last
+    ? `последний архив: ${fmtDate(last.generated_at)} · ${fmtNum(last.files.length)} файлов · ${fmtNum(last.messages)} сообщений`
+    : "ещё не создавался";
+
+  renderArchiveFiles(info.files || []);
+}
+
+function renderArchiveFiles(files) {
+  const box = $("#archive-files");
+  const total = files.reduce((sum, f) => sum + (f.bytes || 0), 0);
+  $("#archive-files-meta").textContent = files.length
+    ? `${files.length} файлов · ${fmtBytes(total)}`
+    : "";
+  if (!files.length) {
+    box.innerHTML = `<p class="muted small">Архив ещё не создан. Нажмите «Сохранить архив».</p>`;
+    return;
+  }
+  box.innerHTML = files
+    .map(
+      (f) => `<button class="archive-file" data-file="${esc(f.file)}">
+        <span>📄</span>
+        <span class="name">${esc(f.file)}</span>
+        <span class="size">${fmtBytes(f.bytes)}</span>
+      </button>`
+    )
+    .join("");
+  $$("#archive-files .archive-file").forEach((btn) =>
+    btn.addEventListener("click", () => previewArchiveFile(btn.dataset.file))
+  );
+}
+
+async function previewArchiveFile(name) {
+  try {
+    const data = await api(
+      `/api/archive/file?guild_id=${encodeURIComponent(state.guildId)}&name=${encodeURIComponent(name)}`
+    );
+    $$("#archive-files .archive-file").forEach((b) =>
+      b.classList.toggle("active", b.dataset.file === data.name)
+    );
+    $("#archive-preview-name").textContent = `${data.name} · ${fmtBytes(data.bytes)}${
+      data.truncated ? " · показано начало" : ""
+    }`;
+    $("#archive-preview").textContent = data.content;
+  } catch (err) {
+    toast(`Файл: ${err.message}`, "error");
+  }
+}
+
+async function buildArchive() {
+  if (!state.guildId) return toast("Сначала выберите сервер", "error");
+  const btn = $("#archive-build");
+  btn.disabled = true;
+  btn.textContent = "💾 Сохраняю…";
+  $("#archive-error").textContent = "";
+  try {
+    state.archiveSilenceUntil = Date.now() + 4000;
+    const result = await api("/api/archive", {
+      method: "POST",
+      body: {
+        guild_id: state.guildId,
+        format: $("#archive-format").value,
+        separator: $("#archive-separator").value,
+        time_format: TIME_VALUE[$("#archive-time").value] || "%d.%m.%Y %H:%M",
+        include_attachments: $("#archive-attachments").checked,
+        include_ids: $("#archive-ids").checked,
+        header: true,
+      },
+    });
+    toast(
+      `Архив сохранён: ${fmtNum(result.files.length)} файлов, ${fmtNum(result.messages)} сообщений`,
+      "ok"
+    );
+    await loadArchive();
+    if (result.files.length) previewArchiveFile(result.files[0].file);
+  } catch (err) {
+    $("#archive-error").textContent = err.message;
+    toast(`Архив: ${err.message}`, "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "💾 Сохранить архив";
+  }
+}
+
+async function toggleArchiveAuto() {
+  try {
+    await api("/api/archive/auto", { method: "POST", body: { enabled: $("#archive-auto").checked } });
+    toast(
+      $("#archive-auto").checked
+        ? "Архив будет сохраняться автоматически после парсинга"
+        : "Автосохранение архива выключено",
+      "ok"
+    );
+  } catch (err) {
+    toast(`Настройка: ${err.message}`, "error");
+  }
+}
+
 /* ------------------------------------------------------------------ websocket */
 function connectWs() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -870,6 +1017,18 @@ function connectWs() {
       return;
     }
     if (payload.type === "scan") handleScan(payload.data);
+    if (payload.type === "archive") {
+      const data = payload.data || {};
+      if (Date.now() < (state.archiveSilenceUntil || 0)) {
+        if (state.view === "archive") loadArchive();
+        return;
+      }
+      toast(
+        `Архив сохранён: ${fmtNum((data.files || []).length)} файлов, ${fmtNum(data.messages)} сообщений`,
+        "ok"
+      );
+      if (state.view === "archive") loadArchive();
+    }
     if (payload.type === "hello" && payload.data?.scanner) handleScan(payload.data.scanner);
     if (payload.type === "stats_stale") {
       loadGuilds(false);
@@ -893,6 +1052,7 @@ function switchView(view) {
   if (view === "messages") loadMessages(true);
   if (view === "authors") loadAuthors(true);
   if (view === "overview") loadOverview();
+  if (view === "archive") loadArchive();
   if (view === "export") updateExports();
 }
 
@@ -962,6 +1122,9 @@ function bindEvents() {
     loadAuthors();
   });
 
+  $("#archive-build").addEventListener("click", buildArchive);
+  $("#archive-auto").addEventListener("change", toggleArchiveAuto);
+  $("#archive-format").addEventListener("change", () => { /* применится при сохранении */ });
   $("#clear-data").addEventListener("click", clearData);
 
   $("#detail-close").addEventListener("click", () => {

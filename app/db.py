@@ -853,6 +853,39 @@ async def iter_messages_export(guild_id: str | None, chunk: int = 1000):
             offset += len(rows)
 
 
+async def get_guild_row(guild_id: str) -> dict[str, Any] | None:
+    async with connect() as conn:
+        cur = await conn.execute("SELECT * FROM guilds WHERE id = ?", (guild_id,))
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def iter_channel_messages(channel_id: str, chunk: int = 500):
+    """Сообщения одного канала по возрастанию времени (для архива)."""
+    async with connect() as conn:
+        offset = 0
+        while True:
+            cur = await conn.execute(
+                """
+                SELECT m.id, m.timestamp, m.edited_timestamp, m.content,
+                       COALESCE(a.global_name, a.username, m.author_id) AS author_name,
+                       a.username, a.bot, m.attachments, m.reactions
+                FROM messages m
+                LEFT JOIN authors a ON a.id = m.author_id
+                WHERE m.channel_id = ?
+                ORDER BY m.timestamp ASC, m.id ASC
+                LIMIT ? OFFSET ?
+                """,
+                (channel_id, chunk, offset),
+            )
+            rows = await cur.fetchall()
+            if not rows:
+                break
+            for r in rows:
+                yield dict(r)
+            offset += len(rows)
+
+
 async def iter_authors_export(guild_id: str | None, chunk: int = 1000):
     where, params = ("WHERE m.guild_id = ?", [guild_id]) if guild_id else ("", [])
     async with connect() as conn:

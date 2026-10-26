@@ -44,6 +44,7 @@
       <button class="nav-item active" data-view="overview"><span>▤</span>Обзор</button>
       <button class="nav-item" data-view="messages"><span>💬</span>Сообщения</button>
       <button class="nav-item" data-view="authors"><span>👥</span>Авторы</button>
+      <button class="nav-item" data-view="archive"><span>🗂</span>Архив</button>
       <button class="nav-item" data-view="export"><span>⤓</span>Экспорт</button>
     </nav>
 
@@ -198,6 +199,77 @@
           </div>
         </footer>
       </article>
+    </section>
+
+    <!-- АРХИВ -->
+    <section class="view" id="view-archive">
+      <article class="card">
+        <header>
+          <h3>Архив: файлы по каналам</h3>
+          <span class="muted small" id="archive-last">ещё не создавался</span>
+        </header>
+        <p class="muted small" style="margin-bottom:14px">
+          Каждое сообщение — отдельная запись с подписью <b>[дата время] Автор (@username): текст</b>.
+          Записи разделяются <span class="code" id="archive-sep-hint">\n</span>.
+          Файлы сохраняются на диск сервера — папку можно открыть, скопировать или скачать целиком.
+        </p>
+
+        <div class="archive-form">
+          <label class="field">
+            <span>Папка архива</span>
+            <input type="text" id="archive-path" readonly>
+          </label>
+          <div class="archive-grid">
+            <label class="field">
+              <span>Формат записи</span>
+              <select id="archive-format">
+                <option value="line">Строка: [время] Автор: текст</option>
+                <option value="block">Блок: подпись, затем текст</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Разделитель сообщений</span>
+              <select id="archive-separator">
+                <option value="\n">\n (перевод строки)</option>
+                <option value="\n\n">\n\n (с пустой строкой)</option>
+                <option value="---">--- (черта)</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Формат времени</span>
+              <select id="archive-time">
+                <option value="dmy_hm">26.10.2026 19:52</option>
+                <option value="ymd_hm">2026-10-26 19:52</option>
+                <option value="dmy_hms">26.10.2026 19:52:31</option>
+                <option value="iso">2026-10-26T19:52:31</option>
+              </select>
+            </label>
+          </div>
+
+          <label class="check"><input type="checkbox" id="archive-attachments" checked> Добавлять список вложений</label>
+          <label class="check"><input type="checkbox" id="archive-ids"> Указывать ID сообщения в подписи</label>
+          <label class="check"><input type="checkbox" id="archive-auto" checked> Сохранять архив автоматически после каждого парсинга</label>
+
+          <div class="scan-actions">
+            <button class="btn btn-primary" id="archive-build">💾 Сохранить архив</button>
+            <a class="btn btn-ghost" id="archive-download" href="#" download>⤓ Скачать zip</a>
+          </div>
+          <p class="error" id="archive-error"></p>
+        </div>
+      </article>
+
+      <div class="grid-2">
+        <article class="card">
+          <header><h3>Файлы каналов</h3><span class="muted small" id="archive-files-meta"></span></header>
+          <div id="archive-files" class="archive-files">
+            <p class="muted small">Архив ещё не создан. Нажмите «Сохранить архив».</p>
+          </div>
+        </article>
+        <article class="card">
+          <header><h3>Предпросмотр</h3><span class="muted small" id="archive-preview-name"></span></header>
+          <pre class="archive-preview" id="archive-preview">Выберите файл слева, чтобы увидеть содержимое.</pre>
+        </article>
+      </div>
     </section>
 
     <!-- ЭКСПОРТ -->

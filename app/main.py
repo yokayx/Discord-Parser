@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import db
+from . import archive, db
 from .config import ENV_TOKEN, STATIC_DIR
 from .discord_api import AuthError, DiscordClient, DiscordError
 from .scanner import ScanBusy, init_scanner
@@ -74,6 +74,21 @@ async def no_cache_api(request: Request, call_next):
 class TokenPayload(BaseModel):
     token: str = Field(min_length=5)
     remember: bool = False
+
+
+class ArchivePayload(BaseModel):
+    guild_id: str
+    format: str = "line"
+    separator: str = "\\n"
+    time_format: str = "%d.%m.%Y %H:%M"
+    include_attachments: bool = True
+    include_ids: bool = False
+    header: bool = True
+    clean: bool = False
+
+
+class ArchiveAutoPayload(BaseModel):
+    enabled: bool = True
 
 
 class ScanPayload(BaseModel):
@@ -460,6 +475,76 @@ def _author_export_row(row: dict[str, Any]) -> dict[str, Any]:
 def _disposition(name: str, ext: str) -> str:
     stamp = time.strftime("%Y%m%d-%H%M")
     return f'attachment; filename="{name}-{stamp}.{ext}"'
+
+
+# --------------------------------------------------------------------------- #
+# архив
+# --------------------------------------------------------------------------- #
+@app.get("/api/archive")
+async def archive_status(guild_id: str) -> dict[str, Any]:
+    """Что уже лежит на диске + текущие настройки формата."""
+    return await archive.archive_info(guild_id)
+
+
+@app.post("/api/archive")
+async def archive_build(payload: ArchivePayload) -> dict[str, Any]:
+    """Собрать/обновить файлы архива по каналам и сохранить настройки."""
+    options = archive.ArchiveOptions.from_dict(payload.model_dump(), clean=payload.clean)
+    await archive.save_options(options)
+    result = await archive.build_guild_archive(payload.guild_id, options)
+    data = result.to_dict()
+    await broadcast({"type": "archive", "data": data})
+    return data
+
+
+@app.post("/api/archive/auto")
+async def archive_auto(payload: ArchiveAutoPayload) -> dict[str, bool]:
+    await archive.set_auto(payload.enabled)
+    return {"auto": payload.enabled}
+
+
+@app.get("/api/archive/download")
+async def archive_download(guild_id: str) -> FileResponse:
+    guild = await db.get_guild_row(guild_id)
+    try:
+        path = await asyncio.to_thread(
+            archive.build_zip, guild_id, (guild or {}).get("name")
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return FileResponse(
+        path,
+        media_type="application/zip",
+        filename=path.name,
+        headers={"Content-Disposition": f'attachment; filename="{path.name}"'},
+    )
+
+
+@app.get("/api/archive/files")
+async def archive_files(guild_id: str) -> dict[str, Any]:
+    guild = await db.get_guild_row(guild_id)
+    files = archive.archive_files(guild_id, (guild or {}).get("name"))
+    return {
+        "files": [{"name": p.name, "bytes": p.stat().st_size} for p in files],
+    }
+
+
+@app.get("/api/archive/file")
+async def archive_file(guild_id: str, name: str, limit: int = Query(200_000, ge=1)) -> dict[str, Any]:
+    """Предпросмотр файла архива (обрезается по limit символов)."""
+    guild = await db.get_guild_row(guild_id)
+    try:
+        path = archive.read_archive_file(guild_id, name, (guild or {}).get("name"))
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "Файл не найден") from exc
+    text = path.read_text(encoding="utf-8", errors="replace")
+    truncated = len(text) > limit
+    return {
+        "name": path.name,
+        "bytes": path.stat().st_size,
+        "truncated": truncated,
+        "content": text[:limit],
+    }
 
 
 # --------------------------------------------------------------------------- #
