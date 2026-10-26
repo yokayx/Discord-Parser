@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+data/*.db
+data/*.db-*
+.env
+.pytest_cache/
+
+data/archive/
+data/exports/
+data/.archive_build/

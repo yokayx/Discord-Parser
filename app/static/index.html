@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Discord Parser — панель</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛰️</text></svg>">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="backdrop"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">🛰️</span>
+    <div>
+      <h1>Discord Parser</h1>
+      <p>история сообщений · авторы · аналитика</p>
+    </div>
+  </div>
+
+  <div class="topbar-right">
+    <label class="guild-select">
+      <span>Сервер</span>
+      <select id="guild-select" aria-label="Сервер">
+        <option value="">— нет данных —</option>
+      </select>
+    </label>
+    <button id="sync-guild" class="btn btn-ghost" title="Перечитать каналы сервера">⟳ Синхр.</button>
+    <div class="account" id="account">
+      <div class="avatar" id="account-avatar">?</div>
+      <div class="account-text">
+        <span id="account-name">Не подключено</span>
+        <small id="account-mode">—</small>
+      </div>
+      <button class="btn btn-icon" id="logout" title="Отключиться">⎋</button>
+    </div>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar">
+    <nav class="nav">
+      <button class="nav-item active" data-view="overview"><span>▤</span>Обзор</button>
+      <button class="nav-item" data-view="messages"><span>💬</span>Сообщения</button>
+      <button class="nav-item" data-view="authors"><span>👥</span>Авторы</button>
+      <button class="nav-item" data-view="archive"><span>🗂</span>Архив</button>
+      <button class="nav-item" data-view="export"><span>⤓</span>Экспорт</button>
+    </nav>
+
+    <section class="panel scan-panel">
+      <div class="panel-head">
+        <h2>Сканирование</h2>
+        <span class="pill" id="scan-pill">готово</span>
+      </div>
+
+      <div class="field">
+        <label for="scan-mode">Режим</label>
+        <select id="scan-mode">
+          <option value="auto">Догрузить новое (auto)</option>
+          <option value="full">Полный пересбор истории</option>
+          <option value="rebuild">Удалить и собрать заново</option>
+        </select>
+      </div>
+
+      <label class="check"><input type="checkbox" id="scan-threads" checked> Включая ветки (threads)</label>
+      <label class="check"><input type="checkbox" id="scan-members" checked> Загрузить участников</label>
+
+      <details class="channel-picker">
+        <summary>Каналы <span id="channel-count" class="muted">0</span></summary>
+        <div class="channel-actions">
+          <button class="btn btn-mini" id="ch-select-all">Все</button>
+          <button class="btn btn-mini" id="ch-select-none">Ничего</button>
+          <button class="btn btn-mini" id="ch-select-text">Только текст</button>
+        </div>
+        <div id="channel-list" class="channel-list">
+          <p class="muted small">Сначала выберите сервер.</p>
+        </div>
+      </details>
+
+      <div class="scan-actions">
+        <button class="btn btn-primary" id="scan-start">▶ Начать сканирование</button>
+        <button class="btn btn-danger" id="scan-stop" disabled>■ Стоп</button>
+      </div>
+
+      <div class="progress-wrap" id="progress-wrap" hidden>
+        <div class="progress"><div class="progress-bar" id="progress-bar"></div></div>
+        <div class="progress-meta">
+          <span id="progress-text">—</span>
+          <span id="progress-percent">0%</span>
+        </div>
+        <div class="progress-stats">
+          <span><b id="ps-fetched">0</b> собрано</span>
+          <span><b id="ps-new">0</b> новых</span>
+          <span><b id="ps-channels">0/0</b> каналов</span>
+        </div>
+      </div>
+      <ul class="scan-errors" id="scan-errors"></ul>
+    </section>
+  </aside>
+
+  <main class="main">
+    <!-- ОБЗОР -->
+    <section class="view active" id="view-overview">
+      <div class="stat-grid">
+        <article class="card stat"><span class="stat-label">Сообщений</span><b id="kpi-messages">0</b><small id="kpi-range">—</small></article>
+        <article class="card stat"><span class="stat-label">Авторов</span><b id="kpi-authors">0</b><small id="kpi-bots">ботов: 0</small></article>
+        <article class="card stat"><span class="stat-label">Каналов</span><b id="kpi-channels">0</b><small id="kpi-scan">просканировано 0/0</small></article>
+        <article class="card stat"><span class="stat-label">Вложений</span><b id="kpi-attachments">0</b><small id="kpi-text">текстовых: 0</small></article>
+      </div>
+
+      <div class="grid-2">
+        <article class="card chart-card">
+          <header><h3>Активность по дням</h3><span class="muted small" id="chart-range"></span></header>
+          <div id="chart-days" class="chart"></div>
+        </article>
+        <article class="card chart-card">
+          <header><h3>Активность по часам (UTC)</h3></header>
+          <div id="chart-hours" class="chart"></div>
+        </article>
+      </div>
+
+      <div class="grid-2">
+        <article class="card">
+          <header><h3>Топ авторов</h3></header>
+          <div id="top-authors" class="rank-list"></div>
+        </article>
+        <article class="card">
+          <header><h3>Каналы</h3></header>
+          <div id="top-channels" class="rank-list"></div>
+        </article>
+      </div>
+
+      <article class="card">
+        <header><h3>Прогресс по каналам</h3><span class="muted small">данные из базы</span></header>
+        <div class="table-wrap">
+          <table class="table" id="scan-table">
+            <thead><tr><th>Канал</th><th>Статус</th><th class="num">Собрано</th><th>Последний запуск</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
+    <!-- СООБЩЕНИЯ -->
+    <section class="view" id="view-messages">
+      <article class="card">
+        <div class="toolbar">
+          <input type="search" id="msg-search" placeholder="Поиск по тексту, автору…">
+          <select id="msg-channel"><option value="">Все каналы</option></select>
+          <select id="msg-sort">
+            <option value="newest">Сначала новые</option>
+            <option value="oldest">Сначала старые</option>
+            <option value="author">По автору</option>
+          </select>
+          <button class="btn btn-ghost" id="msg-reset">Сброс</button>
+        </div>
+        <div class="table-wrap">
+          <table class="table" id="msg-table">
+            <thead><tr><th>Время</th><th>Автор</th><th>Канал</th><th>Сообщение</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <footer class="pager">
+          <span id="msg-total" class="muted"></span>
+          <div class="pager-buttons">
+            <button class="btn btn-mini" id="msg-prev">←</button>
+            <span id="msg-page">1</span>
+            <button class="btn btn-mini" id="msg-next">→</button>
+          </div>
+        </footer>
+      </article>
+    </section>
+
+    <!-- АВТОРЫ -->
+    <section class="view" id="view-authors">
+      <article class="card">
+        <div class="toolbar">
+          <input type="search" id="author-search" placeholder="Поиск автора или ID…">
+          <select id="author-sort">
+            <option value="messages">По числу сообщений</option>
+            <option value="recent">По последней активности</option>
+            <option value="name">По имени</option>
+            <option value="created">По возрасту аккаунта</option>
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table class="table" id="author-table">
+            <thead><tr><th>Автор</th><th class="num">Сообщений</th><th>Первое</th><th>Последнее</th><th>Аккаунт</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <footer class="pager">
+          <span id="author-total" class="muted"></span>
+          <div class="pager-buttons">
+            <button class="btn btn-mini" id="author-prev">←</button>
+            <span id="author-page">1</span>
+            <button class="btn btn-mini" id="author-next">→</button>
+          </div>
+        </footer>
+      </article>
+    </section>
+
+    <!-- АРХИВ -->
+    <section class="view" id="view-archive">
+      <article class="card">
+        <header>
+          <h3>ZIP-архив: сервер → категории → каналы</h3>
+          <span class="muted small" id="archive-last">ещё не создавался</span>
+        </header>
+        <p class="muted small" style="margin-bottom:10px">
+          Итоги парсинга складываются в один ZIP на сервер: внутри — папка сервера,
+          в ней папка на каждую категорию и файл на каждый канал.
+          Каждое сообщение подписано <b>[дата время] Автор (@username): текст</b> и отделено
+          <span class="code" id="archive-sep-hint">\n</span>.
+        </p>
+        <pre class="archive-tree" id="archive-tree-hint">Сервер.zip
+└── Сервер/
+    ├── Категория/
+    │   └── канал.txt
+    ├── general.txt
+    ├── _authors.txt
+    └── _index.txt</pre>
+
+        <div class="archive-form">
+          <label class="field">
+            <span>ZIP-файл на диске</span>
+            <input type="text" id="archive-path" readonly>
+          </label>
+          <div class="archive-grid">
+            <label class="field">
+              <span>Формат записи</span>
+              <select id="archive-format">
+                <option value="line">Строка: [время] Автор: текст</option>
+                <option value="block">Блок: подпись, затем текст</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Разделитель сообщений</span>
+              <select id="archive-separator">
+                <option value="\n">\n (перевод строки)</option>
+                <option value="\n\n">\n\n (с пустой строкой)</option>
+                <option value="---">--- (черта)</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Формат времени</span>
+              <select id="archive-time">
+                <option value="dmy_hm">26.10.2026 19:52</option>
+                <option value="ymd_hm">2026-10-26 19:52</option>
+                <option value="dmy_hms">26.10.2026 19:52:31</option>
+                <option value="iso">2026-10-26T19:52:31</option>
+              </select>
+            </label>
+          </div>
+
+          <label class="check"><input type="checkbox" id="archive-attachments" checked> Добавлять список вложений</label>
+          <label class="check"><input type="checkbox" id="archive-ids"> Указывать ID сообщения в подписи</label>
+          <label class="check"><input type="checkbox" id="archive-auto" checked> Сохранять архив автоматически после каждого парсинга</label>
+
+          <div class="scan-actions">
+            <button class="btn btn-primary" id="archive-build">💾 Сохранить архив</button>
+            <a class="btn btn-ghost" id="archive-download" href="#" download>⤓ Скачать zip</a>
+          </div>
+          <p class="error" id="archive-error"></p>
+        </div>
+      </article>
+
+      <div class="grid-2">
+        <article class="card">
+          <header><h3>Содержимое ZIP</h3><span class="muted small" id="archive-files-meta"></span></header>
+          <div id="archive-files" class="archive-files">
+            <p class="muted small">Архив ещё не создан. Нажмите «Сохранить архив».</p>
+          </div>
+        </article>
+        <article class="card">
+          <header><h3>Предпросмотр</h3><span class="muted small" id="archive-preview-name"></span></header>
+          <pre class="archive-preview" id="archive-preview">Выберите файл слева, чтобы увидеть содержимое.</pre>
+        </article>
+      </div>
+    </section>
+
+    <!-- ЭКСПОРТ -->
+    <section class="view" id="view-export">
+      <div class="grid-2">
+        <article class="card">
+          <header><h3>Сообщения</h3></header>
+          <p class="muted">Полная история выбранного сервера: время, автор, канал, текст, вложения.</p>
+          <div class="export-buttons">
+            <a class="btn btn-primary" id="export-msg-csv" href="#" download>⤓ CSV</a>
+            <a class="btn btn-ghost" id="export-msg-json" href="#" download>⤓ JSON</a>
+          </div>
+        </article>
+        <article class="card">
+          <header><h3>Авторы</h3></header>
+          <p class="muted">Список авторов с числом сообщений, датами активности и возрастом аккаунта.</p>
+          <div class="export-buttons">
+            <a class="btn btn-primary" id="export-auth-csv" href="#" download>⤓ CSV</a>
+            <a class="btn btn-ghost" id="export-auth-json" href="#" download>⤓ JSON</a>
+          </div>
+        </article>
+      </div>
+
+      <article class="card danger-card">
+        <header><h3>Очистка данных сервера</h3></header>
+        <p class="muted">Удаляет из базы все сообщения, авторовые агрегаты и прогресс по выбранному серверу. Действие необратимо.</p>
+        <button class="btn btn-danger" id="clear-data">Удалить данные сервера</button>
+      </article>
+    </section>
+
+    <footer class="bottombar">
+      <span id="status-line" class="muted small">Готов</span>
+      <span class="dot" id="ws-dot" title="WebSocket"></span>
+    </footer>
+  </main>
+</div>
+
+<!-- Модалка подключения -->
+<div class="modal" id="connect-modal" hidden>
+  <div class="modal-card">
+    <button class="modal-close" id="connect-close" title="Закрыть">✕</button>
+    <h2>Подключение к Discord</h2>
+    <p class="muted">
+      Используется <b>только токен бота</b> — с включённым <i>Message Content Intent</i>.
+      Пользовательские токены не принимаются. Токен хранится в памяти сервера,
+      если не включено запоминание.
+    </p>
+    <label class="field">
+      <span>Токен бота</span>
+      <input type="password" id="token-input" placeholder="Вставьте токен бота" autocomplete="off" spellcheck="false">
+    </label>
+    <label class="check"><input type="checkbox" id="token-remember"> Запомнить (сохранить в локальной БД)</label>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="token-submit">Подключиться</button>
+    </div>
+    <p class="error" id="token-error"></p>
+    <details class="help">
+      <summary>Как получить токен бота</summary>
+      <ol>
+        <li>Откройте <span class="code">discord.com/developers/applications</span> → <b>New Application</b>.</li>
+        <li>Вкладка <b>Bot</b> → <b>Reset Token</b> → скопируйте токен.</li>
+        <li>Там же включите <b>Message Content Intent</b> (иначе тексты сообщений будут пустыми).</li>
+        <li>Пригласите бота на сервер с правами <span class="code">Read Message History</span> и <span class="code">View Channels</span>.</li>
+      </ol>
+    </details>
+  </div>
+</div>
+
+<!-- Модалка деталей -->
+<div class="modal" id="detail-modal" hidden>
+  <div class="modal-card wide">
+    <button class="modal-close" id="detail-close">✕</button>
+    <div id="detail-body"></div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
